@@ -14,12 +14,12 @@ const {
 // Get all zones (public - for driver zone selection)
 router.get('/', getAllZones);
 
-// Get single zone (public)
-router.get('/:id', getZoneById);
-
-// Protected routes (admin only)
+// Protected routes (admin only) - MUST be before /:id route
 // Get zone statistics
 router.get('/stats', authenticate, getZoneStats);
+
+// Get single zone (public) - MUST be after /stats route
+router.get('/:id', getZoneById);
 
 // Create zone
 router.post('/', createZone);

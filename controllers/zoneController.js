@@ -1,5 +1,6 @@
 const Zone = require('../models/Zone');
 const Boat = require('../models/Boat');
+const Ghat = require('../models/Ghat');
 const { createAuditLog } = require('../middleware/auditLog');
 
 // Helper function to generate Zone ID
@@ -32,10 +33,18 @@ exports.getAllZones = async (req, res) => {
     try {
         const zones = await Zone.find().sort({ zoneId: 1 });
         
-        // Update boats count for each zone
+        // Update boats count and populate ghats for each zone
         for (const zone of zones) {
             const boatsCount = await Boat.countDocuments({ zoneId: zone._id });
             zone.boats = boatsCount;
+            
+            // Fetch ghats from Ghat collection for this zone
+            const ghats = await Ghat.find({ zoneId: zone._id }).select('ghatName -_id');
+            
+            // Update zone's ghats array with ghat names
+            zone.ghats = ghats.map(ghat => ({ name: ghat.ghatName }));
+            zone.totalGhats = ghats.length;
+            
             await zone.save();
         }
         
@@ -60,7 +69,16 @@ exports.getZoneStats = async (req, res) => {
             }
             return sum + (zone.totalGhats || 0);
         }, 0);
-        const totalBoats = await Boat.countDocuments();
+        
+        // Count actual driver boats (not boat types)
+        let totalBoats = 0;
+        try {
+            totalBoats = await Boat.countDocuments();
+        } catch (boatError) {
+            console.error('Error counting boats:', boatError);
+            // If boat count fails, set to 0
+            totalBoats = 0;
+        }
         
         res.status(200).json({
             total,
@@ -70,7 +88,12 @@ exports.getZoneStats = async (req, res) => {
             totalBoats,
         });
     } catch (error) {
-        res.status(500).json({ message: 'Server error', error: error.message });
+        console.error('Error in getZoneStats:', error);
+        res.status(500).json({ 
+            message: 'Server error', 
+            error: error.message,
+            stack: process.env.NODE_ENV === 'development' ? error.stack : undefined
+        });
     }
 };
 
@@ -85,6 +108,14 @@ exports.getZoneById = async (req, res) => {
         // Update boats count
         const boatsCount = await Boat.countDocuments({ zoneId: zone._id });
         zone.boats = boatsCount;
+        
+        // Fetch ghats from Ghat collection for this zone
+        const ghats = await Ghat.find({ zoneId: zone._id }).select('ghatName -_id');
+        
+        // Update zone's ghats array with ghat names
+        zone.ghats = ghats.map(ghat => ({ name: ghat.ghatName }));
+        zone.totalGhats = ghats.length;
+        
         await zone.save();
         
         res.status(200).json(zone);
