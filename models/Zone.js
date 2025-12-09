@@ -12,7 +12,7 @@ const zoneSchema = new mongoose.Schema({
     },
     ghats: {
         type: [{
-            name: {
+            ghatId: {
                 type: String,
                 required: true,
             },

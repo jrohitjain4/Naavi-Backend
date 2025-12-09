@@ -114,31 +114,16 @@ exports.verifyOtp = async (req, res) => {
                 });
             }
         } else {
-            // New driver - create account with pending status
-            const driverId = await generateDriverId();
-            driver = new Driver({
-                driverId,
-                mobileNo,
-                status: 'Pending',
-                isActive: false,
-                otp: null,
-                otpExpiry: null,
-            });
-            await driver.save();
-
+            // New user - OTP verified successfully
+            // Driver record will be created in completeProfile endpoint
             // Clear OTP
             delete otpStore[mobileNo];
 
             return res.status(200).json({
-                message: 'OTP verified. Please complete your profile.',
-                status: 'pending',
+                message: 'OTP verified successfully. Please complete your registration.',
+                status: 'otp_verified',
                 isNewUser: true,
-                driver: {
-                    _id: driver._id,
-                    driverId: driver.driverId,
-                    mobileNo: driver.mobileNo,
-                    status: driver.status,
-                },
+                mobileNo: mobileNo,
             });
         }
     } catch (error) {
@@ -147,22 +132,4 @@ exports.verifyOtp = async (req, res) => {
     }
 };
 
-// Helper function to generate Driver ID
-const generateDriverId = async () => {
-    try {
-        const lastDriver = await Driver.findOne({ driverId: { $exists: true, $ne: null } })
-            .sort({ driverId: -1 });
-        
-        if (!lastDriver || !lastDriver.driverId) {
-            return 'DRIVER-001';
-        }
-        
-        const lastNumber = parseInt(lastDriver.driverId.split('-')[1]) || 0;
-        const nextNumber = lastNumber + 1;
-        return `DRIVER-${String(nextNumber).padStart(3, '0')}`;
-    } catch (error) {
-        console.error('Error generating driver ID:', error);
-        return `DRIVER-${Date.now().toString().slice(-3)}`;
-    }
-};
 

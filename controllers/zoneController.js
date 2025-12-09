@@ -3,6 +3,107 @@ const Boat = require('../models/Boat');
 const Ghat = require('../models/Ghat');
 const { createAuditLog } = require('../middleware/auditLog');
 
+// Helper function to generate Ghat ID (imported from ghatController logic)
+const generateGhatId = async () => {
+    try {
+        const lastGhat = await Ghat.findOne().sort({ ghatId: -1 });
+        
+        if (!lastGhat || !lastGhat.ghatId) {
+            return 'GHAT-001';
+        }
+        
+        const lastNumber = parseInt(lastGhat.ghatId.split('-')[1]) || 0;
+        const nextNumber = lastNumber + 1;
+        
+        return `GHAT-${String(nextNumber).padStart(3, '0')}`;
+    } catch (error) {
+        console.error('Error generating ghat ID:', error);
+        return `GHAT-${Date.now().toString().slice(-3)}`;
+    }
+};
+
+// Helper function to sync ghats from Zone to Ghat model
+const syncGhatsToModel = async (zone, ghatsArray) => {
+    if (!ghatsArray || !Array.isArray(ghatsArray)) {
+        return [];
+    }
+
+    const ghatIds = [];
+    
+    // Get existing ghats for this zone
+    const existingGhats = await Ghat.find({ zoneId: zone._id });
+    const existingGhatNames = new Set(existingGhats.map(g => g.ghatName.toLowerCase()));
+    
+    // Process each ghat name
+    for (const ghatItem of ghatsArray) {
+        const ghatName = typeof ghatItem === 'string' ? ghatItem : (ghatItem.name || ghatItem.ghatName);
+        
+        if (!ghatName || !ghatName.trim()) {
+            continue;
+        }
+        
+        const trimmedName = ghatName.trim();
+        const ghatNameLower = trimmedName.toLowerCase();
+        
+        // Check if ghat already exists
+        let existingGhat = existingGhats.find(g => g.ghatName.toLowerCase() === ghatNameLower);
+        
+        if (!existingGhat) {
+            // Create new ghat
+            const ghatId = await generateGhatId();
+            const newGhat = new Ghat({
+                ghatId,
+                ghatName: trimmedName,
+                zoneId: zone._id,
+                zoneName: zone.zoneName,
+                status: 'Active',
+                boardingPoints: zone.boardingPoints || [],
+            });
+            
+            await newGhat.save();
+            ghatIds.push(ghatId);
+            
+            // Create audit log for ghat creation
+            await createAuditLog({
+                user: 'System',
+                action: 'Created Ghat',
+                module: 'Ghats',
+                details: `${ghatId} - ${trimmedName} in ${zone.zoneName} (via Zone)`,
+                entityId: newGhat._id.toString(),
+                entityType: 'Ghat',
+            });
+        } else {
+            // Use existing ghat
+            ghatIds.push(existingGhat.ghatId);
+        }
+    }
+    
+    // Delete ghats that are no longer in the zone's ghats array
+    const currentGhatNames = new Set(ghatsArray.map(g => {
+        const name = typeof g === 'string' ? g : (g.name || g.ghatName);
+        return name ? name.trim().toLowerCase() : '';
+    }).filter(n => n));
+    
+    for (const existingGhat of existingGhats) {
+        if (!currentGhatNames.has(existingGhat.ghatName.toLowerCase())) {
+            // Ghat was removed from zone, delete it
+            await Ghat.findByIdAndDelete(existingGhat._id);
+            
+            // Create audit log for ghat deletion
+            await createAuditLog({
+                user: 'System',
+                action: 'Deleted Ghat',
+                module: 'Ghats',
+                details: `${existingGhat.ghatId} - ${existingGhat.ghatName} (removed from zone)`,
+                entityId: existingGhat._id.toString(),
+                entityType: 'Ghat',
+            });
+        }
+    }
+    
+    return ghatIds;
+};
+
 // Helper function to generate Zone ID
 const generateZoneId = async () => {
     try {
@@ -39,10 +140,13 @@ exports.getAllZones = async (req, res) => {
             zone.boats = boatsCount;
             
             // Fetch ghats from Ghat collection for this zone
-            const ghats = await Ghat.find({ zoneId: zone._id }).select('ghatName -_id');
+            const ghats = await Ghat.find({ zoneId: zone._id }).select('ghatId ghatName -_id');
             
-            // Update zone's ghats array with ghat names
-            zone.ghats = ghats.map(ghat => ({ name: ghat.ghatName }));
+            // Update zone's ghats array with ghatIds (for storage) and names (for display)
+            zone.ghats = ghats.map(ghat => ({ 
+                ghatId: ghat.ghatId,
+                name: ghat.ghatName // Include name for frontend display
+            }));
             zone.totalGhats = ghats.length;
             
             await zone.save();
@@ -110,10 +214,13 @@ exports.getZoneById = async (req, res) => {
         zone.boats = boatsCount;
         
         // Fetch ghats from Ghat collection for this zone
-        const ghats = await Ghat.find({ zoneId: zone._id }).select('ghatName -_id');
+        const ghats = await Ghat.find({ zoneId: zone._id }).select('ghatId ghatName -_id');
         
-        // Update zone's ghats array with ghat names
-        zone.ghats = ghats.map(ghat => ({ name: ghat.ghatName }));
+        // Update zone's ghats array with ghatIds (for storage) and names (for display)
+        zone.ghats = ghats.map(ghat => ({ 
+            ghatId: ghat.ghatId,
+            name: ghat.ghatName // Include name for frontend display
+        }));
         zone.totalGhats = ghats.length;
         
         await zone.save();
@@ -132,11 +239,6 @@ exports.createZone = async (req, res) => {
         // Generate zone ID automatically
         const zoneId = await generateZoneId();
         
-        // Convert ghats array if provided
-        const ghatsArray = ghats && Array.isArray(ghats) 
-            ? ghats.map(ghat => typeof ghat === 'string' ? { name: ghat } : ghat)
-            : [];
-        
         // Convert boardingPoints to array if provided
         const boardingPointsArray = boardingPoints && Array.isArray(boardingPoints)
             ? boardingPoints
@@ -144,17 +246,29 @@ exports.createZone = async (req, res) => {
                 ? boardingPoints.split(',').map(bp => bp.trim()).filter(bp => bp.length > 0)
                 : []);
         
+        // Create zone first
         const newZone = new Zone({
             zoneId,
             zoneName,
-            ghats: ghatsArray,
-            totalGhats: ghatsArray.length,
+            ghats: [], // Will be populated after ghats are created
+            totalGhats: 0,
             boats: 0, // Will be calculated from boats
             status: status || 'Active',
             boardingPoints: boardingPointsArray,
         });
         
         await newZone.save();
+        
+        // Now sync ghats - create Ghat entries and get ghatIds
+        let ghatIds = [];
+        if (ghats && Array.isArray(ghats) && ghats.length > 0) {
+            ghatIds = await syncGhatsToModel(newZone, ghats);
+            
+            // Update zone with ghatIds
+            newZone.ghats = ghatIds.map(ghatId => ({ ghatId }));
+            newZone.totalGhats = ghatIds.length;
+            await newZone.save();
+        }
         
         // Create audit log
         await createAuditLog({
@@ -163,13 +277,21 @@ exports.createZone = async (req, res) => {
             userId: req.user?._id?.toString() || '',
             action: 'Created Zone',
             module: 'Zones',
-            details: `${newZone.zoneId} - ${newZone.zoneName}`,
+            details: `${newZone.zoneId} - ${newZone.zoneName} with ${ghatIds.length} ghat(s)`,
             ipAddress: req.ip || req.connection?.remoteAddress || req.socket?.remoteAddress || '',
             entityId: newZone._id.toString(),
             entityType: 'Zone',
         });
         
-        res.status(201).json({ message: 'Zone created successfully', zone: newZone });
+        // Fetch updated zone with populated data
+        const updatedZone = await Zone.findById(newZone._id);
+        const ghatsData = await Ghat.find({ zoneId: newZone._id }).select('ghatId ghatName -_id');
+        updatedZone.ghats = ghatsData.map(ghat => ({ 
+            ghatId: ghat.ghatId,
+            name: ghat.ghatName // Include name for frontend display
+        }));
+        
+        res.status(201).json({ message: 'Zone created successfully', zone: updatedZone });
     } catch (error) {
         if (error.code === 11000) {
             return res.status(400).json({ message: 'Zone ID already exists' });
@@ -189,16 +311,17 @@ exports.updateZone = async (req, res) => {
         }
         
         // Update fields (zoneId cannot be changed)
-        zone.zoneName = zoneName || zone.zoneName;
-        zone.status = status || zone.status;
+        if (zoneName) zone.zoneName = zoneName;
+        if (status) zone.status = status;
         
-        // Update ghats if provided
+        // Update ghats if provided - sync to Ghat model
         if (ghats !== undefined) {
-            const ghatsArray = Array.isArray(ghats) 
-                ? ghats.map(ghat => typeof ghat === 'string' ? { name: ghat } : ghat)
-                : [];
-            zone.ghats = ghatsArray;
-            zone.totalGhats = ghatsArray.length;
+            const ghatsArray = Array.isArray(ghats) ? ghats : [];
+            const ghatIds = await syncGhatsToModel(zone, ghatsArray);
+            
+            // Update zone with ghatIds
+            zone.ghats = ghatIds.map(ghatId => ({ ghatId }));
+            zone.totalGhats = ghatIds.length;
         }
         
         // Update boardingPoints if provided
@@ -209,6 +332,12 @@ exports.updateZone = async (req, res) => {
                     ? boardingPoints.split(',').map(bp => bp.trim()).filter(bp => bp.length > 0)
                     : []);
             zone.boardingPoints = boardingPointsArray;
+            
+            // Also update boarding points in all ghats of this zone
+            await Ghat.updateMany(
+                { zoneId: zone._id },
+                { boardingPoints: boardingPointsArray }
+            );
         }
         
         // Update boats count
@@ -229,6 +358,13 @@ exports.updateZone = async (req, res) => {
             entityId: zone._id.toString(),
             entityType: 'Zone',
         });
+        
+        // Fetch updated zone with populated ghats
+        const ghatsData = await Ghat.find({ zoneId: zone._id }).select('ghatId ghatName -_id');
+        zone.ghats = ghatsData.map(ghat => ({ 
+            ghatId: ghat.ghatId,
+            name: ghat.ghatName // Include name for frontend display
+        }));
         
         res.status(200).json({ message: 'Zone updated successfully', zone });
     } catch (error) {
@@ -255,6 +391,12 @@ exports.deleteZone = async (req, res) => {
             });
         }
         
+        // Delete all ghats associated with this zone
+        const ghatsCount = await Ghat.countDocuments({ zoneId: zone._id });
+        if (ghatsCount > 0) {
+            await Ghat.deleteMany({ zoneId: zone._id });
+        }
+        
         // Create audit log before deletion
         await createAuditLog({
             user: req.user?.email || req.user?.name || 'System',
@@ -262,7 +404,7 @@ exports.deleteZone = async (req, res) => {
             userId: req.user?._id?.toString() || '',
             action: 'Deleted Zone',
             module: 'Zones',
-            details: `${zone.zoneId} - ${zone.zoneName}`,
+            details: `${zone.zoneId} - ${zone.zoneName} (and ${ghatsCount} ghat(s))`,
             ipAddress: req.ip || req.connection?.remoteAddress || req.socket?.remoteAddress || '',
             entityId: zone._id.toString(),
             entityType: 'Zone',

@@ -40,3 +40,6 @@ adminSchema.methods.comparePassword = async function(candidatePassword) {
 
 module.exports = mongoose.model('Admin', adminSchema);
 
+//rohitjainltp59_db_user
+//jdF8UzejQLB6PTMX
+//mongodb+srv://rohitjainltp59_db_user:jdF8UzejQLB6PTMX@cluster0.q140qhz.mongodb.net/?appName=Cluster0
