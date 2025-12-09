@@ -132,28 +132,34 @@ const generateZoneId = async () => {
 // Get all zones
 exports.getAllZones = async (req, res) => {
     try {
-        const zones = await Zone.find().sort({ zoneId: 1 });
+        // Use lean() to get plain objects and avoid Mongoose validation issues
+        const zones = await Zone.find().sort({ zoneId: 1 }).lean();
         
-        // Update boats count and populate ghats for each zone
-        for (const zone of zones) {
+        // Prepare response with populated ghat names
+        const zonesWithGhats = await Promise.all(zones.map(async (zone) => {
+            // Update boats count
             const boatsCount = await Boat.countDocuments({ zoneId: zone._id });
-            zone.boats = boatsCount;
             
             // Fetch ghats from Ghat collection for this zone
-            const ghats = await Ghat.find({ zoneId: zone._id }).select('ghatId ghatName -_id');
+            const ghats = await Ghat.find({ zoneId: zone._id }).select('ghatId ghatName -_id').lean();
             
-            // Update zone's ghats array with ghatIds (for storage) and names (for display)
-            zone.ghats = ghats.map(ghat => ({ 
-                ghatId: ghat.ghatId,
-                name: ghat.ghatName // Include name for frontend display
-            }));
-            zone.totalGhats = ghats.length;
+            // Build zone object with ghats
+            const zoneObj = {
+                ...zone,
+                boats: boatsCount,
+                ghats: ghats.map(ghat => ({ 
+                    ghatId: ghat.ghatId,
+                    name: ghat.ghatName // Include name for frontend display
+                })),
+                totalGhats: ghats.length,
+            };
             
-            await zone.save();
-        }
+            return zoneObj;
+        }));
         
-        res.status(200).json(zones);
+        res.status(200).json(zonesWithGhats);
     } catch (error) {
+        console.error('Error in getAllZones:', error);
         res.status(500).json({ message: 'Server error', error: error.message });
     }
 };
@@ -204,29 +210,32 @@ exports.getZoneStats = async (req, res) => {
 // Get single zone by ID
 exports.getZoneById = async (req, res) => {
     try {
-        const zone = await Zone.findById(req.params.id);
+        // Use lean() to get plain object and avoid Mongoose validation issues
+        const zone = await Zone.findById(req.params.id).lean();
         if (!zone) {
             return res.status(404).json({ message: 'Zone not found' });
         }
         
         // Update boats count
         const boatsCount = await Boat.countDocuments({ zoneId: zone._id });
-        zone.boats = boatsCount;
         
         // Fetch ghats from Ghat collection for this zone
-        const ghats = await Ghat.find({ zoneId: zone._id }).select('ghatId ghatName -_id');
+        const ghats = await Ghat.find({ zoneId: zone._id }).select('ghatId ghatName -_id').lean();
         
-        // Update zone's ghats array with ghatIds (for storage) and names (for display)
-        zone.ghats = ghats.map(ghat => ({ 
-            ghatId: ghat.ghatId,
-            name: ghat.ghatName // Include name for frontend display
-        }));
-        zone.totalGhats = ghats.length;
+        // Build zone object with ghats
+        const zoneObj = {
+            ...zone,
+            boats: boatsCount,
+            ghats: ghats.map(ghat => ({ 
+                ghatId: ghat.ghatId,
+                name: ghat.ghatName // Include name for frontend display
+            })),
+            totalGhats: ghats.length,
+        };
         
-        await zone.save();
-        
-        res.status(200).json(zone);
+        res.status(200).json(zoneObj);
     } catch (error) {
+        console.error('Error in getZoneById:', error);
         res.status(500).json({ message: 'Server error', error: error.message });
     }
 };
@@ -286,12 +295,15 @@ exports.createZone = async (req, res) => {
         // Fetch updated zone with populated data
         const updatedZone = await Zone.findById(newZone._id);
         const ghatsData = await Ghat.find({ zoneId: newZone._id }).select('ghatId ghatName -_id');
-        updatedZone.ghats = ghatsData.map(ghat => ({ 
+        
+        // Convert to plain object and add ghat names
+        const zoneObj = updatedZone.toObject();
+        zoneObj.ghats = ghatsData.map(ghat => ({ 
             ghatId: ghat.ghatId,
             name: ghat.ghatName // Include name for frontend display
         }));
         
-        res.status(201).json({ message: 'Zone created successfully', zone: updatedZone });
+        res.status(201).json({ message: 'Zone created successfully', zone: zoneObj });
     } catch (error) {
         if (error.code === 11000) {
             return res.status(400).json({ message: 'Zone ID already exists' });
@@ -361,12 +373,15 @@ exports.updateZone = async (req, res) => {
         
         // Fetch updated zone with populated ghats
         const ghatsData = await Ghat.find({ zoneId: zone._id }).select('ghatId ghatName -_id');
-        zone.ghats = ghatsData.map(ghat => ({ 
+        
+        // Convert to plain object and add ghat names
+        const zoneObj = zone.toObject();
+        zoneObj.ghats = ghatsData.map(ghat => ({ 
             ghatId: ghat.ghatId,
             name: ghat.ghatName // Include name for frontend display
         }));
         
-        res.status(200).json({ message: 'Zone updated successfully', zone });
+        res.status(200).json({ message: 'Zone updated successfully', zone: zoneObj });
     } catch (error) {
         if (error.code === 11000) {
             return res.status(400).json({ message: 'Zone ID already exists' });

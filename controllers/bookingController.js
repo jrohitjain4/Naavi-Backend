@@ -88,6 +88,11 @@ exports.createBooking = async (req, res) => {
             couponCode,
             discountAmount,
             finalPrice,
+            gstAmount,
+            gstPercentage,
+            priceWithGst,
+            advancePayment,
+            remainingPayment,
         } = req.body;
 
         // Generate booking ID automatically
@@ -113,6 +118,11 @@ exports.createBooking = async (req, res) => {
             couponCode: couponCode || null,
             discountAmount: discountAmount || 0,
             finalPrice: finalPrice || totalPrice,
+            gstAmount: gstAmount || 0,
+            gstPercentage: gstPercentage || 5,
+            priceWithGst: priceWithGst || (finalPrice || totalPrice),
+            advancePayment: advancePayment || 0,
+            remainingPayment: remainingPayment || 0,
         });
 
         // Update coupon usage if applied

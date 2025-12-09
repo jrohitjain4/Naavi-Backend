@@ -16,6 +16,7 @@ const bookingSchema = new mongoose.Schema({
         ref: 'Boat',
         required: true,
     },
+
     boatName: {
         type: String,
         required: true,
@@ -64,7 +65,7 @@ const bookingSchema = new mongoose.Schema({
     status: {
         type: String,
         required: true,
-        enum: ['Pending', 'Confirmed', 'Completed', 'Cancelled'],
+        enum: ['Pending', 'Accepted', 'Completed'],
         default: 'Pending',
     },
     paymentMethod: {
@@ -89,6 +90,30 @@ const bookingSchema = new mongoose.Schema({
     finalPrice: {
         type: Number,
         required: true,
+        min: 0,
+    },
+    gstAmount: {
+        type: Number,
+        default: 0,
+        min: 0,
+    },
+    gstPercentage: {
+        type: Number,
+        default: 5, // 5% GST
+    },
+    priceWithGst: {
+        type: Number,
+        default: 0,
+        min: 0,
+    },
+    advancePayment: {
+        type: Number,
+        default: 0,
+        min: 0,
+    },
+    remainingPayment: {
+        type: Number,
+        default: 0,
         min: 0,
     },
     driverId: {
