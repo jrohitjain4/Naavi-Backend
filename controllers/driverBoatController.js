@@ -53,10 +53,10 @@ exports.registerBoat = async (req, res) => {
         // Get driver ID from token or request body
         const driverId = req.driver?._id || req.body.driverId;
 
-        // Validation
-        if (!boatTypeId || !boatNumber || !state || !city || !zoneId) {
+        // Validation (zoneId is optional - will use driver's zone automatically)
+        if (!boatTypeId || !boatNumber || !state || !city) {
             return res.status(400).json({
-                message: 'All fields are required: boatTypeId, boatNumber, state, city, zoneId',
+                message: 'All fields are required: boatTypeId, boatNumber, state, city',
             });
         }
 
@@ -79,34 +79,68 @@ exports.registerBoat = async (req, res) => {
             });
         }
 
+        // Use driver's zone automatically (zoneId is optional in request)
+        let finalZoneId = zoneId || driver.zoneId;
+        
+        // If zoneId provided but doesn't match driver's zone, use driver's zone
+        if (zoneId && driver.zoneId.toString() !== zoneId.toString()) {
+            // Use driver's zone automatically (override provided zoneId)
+            finalZoneId = driver.zoneId;
+        }
+
         // Validate zone exists
-        const zone = await Zone.findById(zoneId);
+        const zone = await Zone.findById(finalZoneId);
         if (!zone) {
             return res.status(404).json({ message: 'Zone not found' });
         }
 
-        // Check if driver and boat are in same zone
-        if (driver.zoneId.toString() !== zoneId) {
-            return res.status(400).json({
-                message: 'Boat zone must match driver zone',
-            });
-        }
-
-        // Validate ghat if provided
+        // Validate ghat if provided, otherwise use zone's first boarding point/ghat
+        let finalGhatId = ghatId;
         let ghat = null;
         let ghatName = null;
-        if (ghatId) {
-            ghat = await Ghat.findById(ghatId);
+
+        if (finalGhatId) {
+            // If ghatId provided, validate it
+            ghat = await Ghat.findById(finalGhatId);
             if (!ghat) {
                 return res.status(404).json({ message: 'Ghat not found' });
             }
             // Verify ghat is in same zone
-            if (ghat.zoneId.toString() !== zoneId) {
+            if (ghat.zoneId.toString() !== finalZoneId.toString()) {
                 return res.status(400).json({
-                    message: 'Ghat must be in the same zone as boat',
+                    message: 'Ghat must be in the same zone as driver',
                 });
             }
             ghatName = ghat.ghatName;
+        } else {
+            // If ghatId not provided, use zone's first ghat or first boarding point
+            // First try to get first ghat from zone
+            const zoneGhats = await Ghat.find({ zoneId: finalZoneId }).sort({ createdAt: 1 }).limit(1);
+            
+            if (zoneGhats.length > 0) {
+                // Use first ghat from zone
+                ghat = zoneGhats[0];
+                finalGhatId = ghat._id;
+                ghatName = ghat.ghatName;
+            } else if (zone.boardingPoints && zone.boardingPoints.length > 0) {
+                // If no ghat found, try to find ghat by boarding point name
+                const firstBoardingPoint = zone.boardingPoints[0];
+                const boardingPointGhat = await Ghat.findOne({ 
+                    zoneId: finalZoneId,
+                    ghatName: { $regex: new RegExp(firstBoardingPoint, 'i') }
+                });
+                
+                if (boardingPointGhat) {
+                    ghat = boardingPointGhat;
+                    finalGhatId = boardingPointGhat._id;
+                    ghatName = boardingPointGhat.ghatName;
+                } else {
+                    // Create a ghat from boarding point if it doesn't exist
+                    // This is optional - you can remove this if you don't want to auto-create
+                    ghatName = firstBoardingPoint;
+                    // ghatId will remain null, but ghatName will be set
+                }
+            }
         }
 
         // Check if boat number already exists
@@ -118,8 +152,8 @@ exports.registerBoat = async (req, res) => {
         // Handle boat registration paper upload
         const boatRegistrationPaper = req.files?.boatRegistrationPaper?.[0]?.path || req.body.boatRegistrationPaper;
 
-        // Generate boat ID
-        const boatId = await generateBoatId(zoneId);
+        // Generate boat ID using driver's zone
+        const boatId = await generateBoatId(finalZoneId);
 
         // Create boat using admin boat type's capacity and boatType name
         const newBoat = new Boat({
@@ -130,9 +164,9 @@ exports.registerBoat = async (req, res) => {
             capacity: boatType.capacity, // Use admin boat type's capacity
             state,
             city,
-            ghatId: ghatId || null,
-            ghatName: ghatName || null,
-            zoneId,
+            ghatId: finalGhatId || null, // Use automatically assigned ghat or provided one
+            ghatName: ghatName || null, // Use automatically assigned ghat name or provided one
+            zoneId: finalZoneId, // Use driver's zone automatically
             zoneName: zone.zoneName,
             associatedDriverId: driverId,
             boatRegistrationPaper: boatRegistrationPaper || null,
@@ -143,6 +177,7 @@ exports.registerBoat = async (req, res) => {
 
         // Link boat to driver
         driver.associatedBoatId = newBoat._id;
+        driver.boatId = newBoat.boatId; // Save boat ID string
         await driver.save();
 
         // Create audit log

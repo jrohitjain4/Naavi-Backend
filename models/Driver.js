@@ -45,6 +45,10 @@ const driverSchema = new mongoose.Schema({
         ref: 'Boat',
         default: null,
     },
+    boatId: {
+        type: String, // Boat ID string (e.g., "BOAT-ZONE001-001")
+        default: null,
+    },
     zoneId: {
         type: mongoose.Schema.Types.ObjectId,
         ref: 'Zone',

@@ -37,7 +37,7 @@ exports.getAllDrivers = async (req, res) => {
         
         const drivers = await Driver.find(query)
             .populate('zoneId', 'zoneId zoneName')
-            .populate('associatedBoatId', 'boatId boatNumber boatType')
+            .populate('associatedBoatId', 'boatId boatNumber boatType capacity state city ghatName zoneName status boatRegistrationPaper')
             .sort({ createdAt: -1 });
         res.status(200).json(drivers);
     } catch (error) {
@@ -50,7 +50,7 @@ exports.getPendingDrivers = async (req, res) => {
     try {
         const drivers = await Driver.find({ status: 'Pending' })
             .populate('zoneId', 'zoneId zoneName')
-            .populate('associatedBoatId', 'boatId boatNumber boatType')
+            .populate('associatedBoatId', 'boatId boatNumber boatType capacity state city ghatName zoneName status boatRegistrationPaper')
             .sort({ createdAt: -1 });
         res.status(200).json(drivers);
     } catch (error) {
