@@ -111,6 +111,7 @@ exports.registerBoat = async (req, res) => {
                     message: 'Ghat must be in the same zone as driver',
                 });
             }
+            finalGhatId = ghat._id;
             ghatName = ghat.ghatName;
         } else {
             // If ghatId not provided, use zone's first ghat or first boarding point
@@ -135,13 +136,26 @@ exports.registerBoat = async (req, res) => {
                     finalGhatId = boardingPointGhat._id;
                     ghatName = boardingPointGhat.ghatName;
                 } else {
-                    // Create a ghat from boarding point if it doesn't exist
-                    // This is optional - you can remove this if you don't want to auto-create
+                    // Use first boarding point as ghat name if ghat doesn't exist
                     ghatName = firstBoardingPoint;
-                    // ghatId will remain null, but ghatName will be set
+                    // ghatId will remain null, but ghatName will be set for display
+                }
+            } else {
+                // If no boarding points, try to get any ghat from zone's ghats array
+                if (zone.ghats && zone.ghats.length > 0) {
+                    const firstGhatId = zone.ghats[0].ghatId;
+                    const ghatFromZone = await Ghat.findOne({ ghatId: firstGhatId, zoneId: finalZoneId });
+                    if (ghatFromZone) {
+                        ghat = ghatFromZone;
+                        finalGhatId = ghatFromZone._id;
+                        ghatName = ghatFromZone.ghatName;
+                    }
                 }
             }
         }
+
+        // Ensure zoneName is always set from driver's zone
+        const finalZoneName = zone.zoneName || driver.zoneName;
 
         // Check if boat number already exists
         const existingBoat = await Boat.findOne({ boatNumber });
@@ -167,7 +181,7 @@ exports.registerBoat = async (req, res) => {
             ghatId: finalGhatId || null, // Use automatically assigned ghat or provided one
             ghatName: ghatName || null, // Use automatically assigned ghat name or provided one
             zoneId: finalZoneId, // Use driver's zone automatically
-            zoneName: zone.zoneName,
+            zoneName: finalZoneName, // Ensure zoneName is always set
             associatedDriverId: driverId,
             boatRegistrationPaper: boatRegistrationPaper || null,
             status: 'Pending', // Pending until admin approves
@@ -193,19 +207,48 @@ exports.registerBoat = async (req, res) => {
             entityType: 'Boat',
         });
 
+        // Populate boat with zone and ghat data for response
+        const populatedBoat = await Boat.findById(newBoat._id)
+            .populate('zoneId', 'zoneId zoneName')
+            .populate('ghatId', 'ghatId ghatName')
+            .populate('boatTypeId', 'boatId boatType capacity');
+
+        // Build response with guaranteed zone and ghat data
+        const boatResponse = {
+            _id: populatedBoat._id,
+            boatId: populatedBoat.boatId,
+            boatTypeId: populatedBoat.boatTypeId,
+            boatNumber: populatedBoat.boatNumber,
+            boatType: populatedBoat.boatType,
+            capacity: populatedBoat.capacity,
+            state: populatedBoat.state,
+            city: populatedBoat.city,
+            zoneId: populatedBoat.zoneId ? {
+                _id: populatedBoat.zoneId._id,
+                zoneId: populatedBoat.zoneId.zoneId,
+                zoneName: populatedBoat.zoneId.zoneName
+            } : {
+                _id: finalZoneId,
+                zoneId: zone.zoneId,
+                zoneName: finalZoneName
+            },
+            zoneName: populatedBoat.zoneName || finalZoneName || (populatedBoat.zoneId ? populatedBoat.zoneId.zoneName : driver.zoneName),
+            ghatId: populatedBoat.ghatId ? {
+                _id: populatedBoat.ghatId._id,
+                ghatId: populatedBoat.ghatId.ghatId,
+                ghatName: populatedBoat.ghatId.ghatName
+            } : (finalGhatId ? {
+                _id: finalGhatId,
+                ghatId: ghat?.ghatId,
+                ghatName: ghatName
+            } : null),
+            ghatName: populatedBoat.ghatName || ghatName || (populatedBoat.ghatId ? populatedBoat.ghatId.ghatName : null),
+            status: populatedBoat.status,
+        };
+        
         res.status(201).json({
             message: 'Boat registered successfully. Request submitted for admin approval.',
-            boat: {
-                _id: newBoat._id,
-                boatId: newBoat.boatId,
-                boatTypeId: newBoat.boatTypeId,
-                boatNumber: newBoat.boatNumber,
-                boatType: newBoat.boatType,
-                capacity: newBoat.capacity,
-                zoneId: newBoat.zoneId,
-                zoneName: newBoat.zoneName,
-                status: newBoat.status,
-            },
+            boat: boatResponse,
             driver: {
                 _id: driver._id,
                 driverId: driver.driverId,
@@ -245,7 +288,40 @@ exports.getDriverBoat = async (req, res) => {
             .populate('associatedDriverId', 'driverId firstName lastName')
             .populate('boatTypeId', 'boatId boatType capacity');
 
-        res.status(200).json({ boat });
+        if (!boat) {
+            return res.status(404).json({ message: 'Boat not found' });
+        }
+
+        // Ensure zoneName and ghatName are set even if populate fails
+        const boatObj = boat.toObject();
+        
+        // Ensure zoneName is always set
+        if (!boatObj.zoneName) {
+            if (boatObj.zoneId && typeof boatObj.zoneId === 'object') {
+                boatObj.zoneName = boatObj.zoneId.zoneName || driver.zoneName;
+            } else {
+                boatObj.zoneName = driver.zoneName;
+            }
+        }
+        
+        // Ensure ghatName is set if ghatId exists
+        if (!boatObj.ghatName && boatObj.ghatId) {
+            if (typeof boatObj.ghatId === 'object') {
+                boatObj.ghatName = boatObj.ghatId.ghatName;
+            }
+        }
+
+        // Ensure zoneId object has zoneName
+        if (boatObj.zoneId && typeof boatObj.zoneId === 'object' && !boatObj.zoneId.zoneName) {
+            boatObj.zoneId.zoneName = boatObj.zoneName || driver.zoneName;
+        }
+
+        // Ensure ghatId object has ghatName
+        if (boatObj.ghatId && typeof boatObj.ghatId === 'object' && !boatObj.ghatId.ghatName) {
+            boatObj.ghatId.ghatName = boatObj.ghatName;
+        }
+
+        res.status(200).json({ boat: boatObj });
     } catch (error) {
         console.error('Error fetching driver boat:', error);
         res.status(500).json({ message: 'Server error', error: error.message });

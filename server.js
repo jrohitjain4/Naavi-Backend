@@ -23,6 +23,7 @@ const priceRoutes = require('./routes/priceRoutes');
 const driverAuthRoutes = require('./routes/driverAuthRoutes');
 const driverProfileRoutes = require('./routes/driverProfileRoutes');
 const driverBoatRoutes = require('./routes/driverBoatRoutes');
+const driverBookingRoutes = require('./routes/driverBookingRoutes');
 
 const app = express();
 
@@ -59,6 +60,7 @@ app.use('/api/prices', priceRoutes); // Price routes
 app.use('/api/driver-auth', driverAuthRoutes); // Driver authentication routes
 app.use('/api/driver-profile', driverProfileRoutes); // Driver profile routes
 app.use('/api/driver-boat', driverBoatRoutes); // Driver boat registration routes
+app.use('/api/driver-bookings', driverBookingRoutes); // Driver booking feeds for driver app
 
 // Start the server
 const PORT = process.env.PORT || 5000;

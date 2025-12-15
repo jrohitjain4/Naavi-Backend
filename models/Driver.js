@@ -68,6 +68,11 @@ const driverSchema = new mongoose.Schema({
         type: Boolean,
         default: false, // Only true when approved
     },
+    availability: {
+        type: String,
+        enum: ['Available', 'OnDuty'],
+        default: 'Available',
+    },
     // OTP fields for login
     otp: {
         type: String,
